@@ -11,4 +11,5 @@ case "$ENABLE_BIND" in
 esac
 
 DRIVER_NAME=$(lspci -nn | grep -E "\[(15b3:.*)|(1414:00ba)\]" | awk '{print $1}' | uniq |  xargs -I {} readlink /sys/bus/pci/devices/{}/driver | xargs basename)
-echo $DRIVER_NAME
+
+lspci -nn | grep -E "\[(15b3:.*)|(1414:00ba)\]" | awk '{print $1}' | xargs -I {} tee /sys/bus/pci/drivers/${DRIVER_NAME}/${ENABLE_BIND}
