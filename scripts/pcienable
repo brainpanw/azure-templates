@@ -1,0 +1,13 @@
+#! /usr/bin/env bash
+
+ENABLE_BIND=${1:-"unbind"}
+case "$ENABLE_BIND" in
+	"bind"|"unbind")
+		;;
+	*)
+		echo 'Error: valid arguments are: bind|unbind or no arguments (defaults to unbind)'
+		exit 1
+		;;
+esac
+
+DRIVER_NAME=lspci -nn | grep -E "\[(15b3:.*)|(1414:00ba)\]" | awk '{print $1}' | uniq |  xargs -I {} readlink /sys/bus/pci/devices/{}/driver | xargs basename 
