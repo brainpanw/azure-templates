@@ -3,9 +3,14 @@
 SSL_KEY_FILE=/etc/ssl/private/nginx-selfsigned.key
 SSL_CRT_FILE=/etc/ssl/certs/nginx-selfsigned.crt
 SSL_SUBJECT="/C=US/ST=WA/L=Redmond/O=Azure Cloud Partnership/CN=azure.csp.paloaltonetworks.com"
+
+HTTP_1G_FILE=/var/www/html/1G
+
 apt update -y
 apt upgrade -y
 apt install nginx iperf wrk -y
+
+# Create certificate for https
 openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout ${SSL_KEY_FILE} -out ${SSL_CRT_FILE} -subj "${SSL_SUBJECT}"
 cat <<EOF > /etc/nginx/sites-available/default-ssl
 server {
@@ -30,6 +35,8 @@ server {
         }
 }
 EOF
+
+# Create basic HTML page
 cat <<EOF > /var/www/html/index.html
 <!DOCTYPE html>
 <html>
@@ -40,5 +47,15 @@ cat <<EOF > /var/www/html/index.html
 <h1>$(hostname)</h1>
 </body>
 EOF
+
+# Create a 1G text file with random characters
+dd if=/dev/urandom of=${HTTP_1G_FILE} bs=1G count=1
+
+# Enable https
 ln -s /etc/nginx/sites-available/default-ssl /etc/nginx/sites-enabled/
 nginx -t && systemctl restart nginx
+
+# Open ports for iperf
+ufw allow 5001/tcp
+ufw allow 5001/udp
+
