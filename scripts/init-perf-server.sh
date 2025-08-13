@@ -6,6 +6,8 @@ SSL_SUBJECT="/C=US/ST=WA/L=Redmond/O=Azure Cloud Partnership/CN=azure.csp.paloal
 
 HTTP_1G_FILE=/var/www/html/1G
 
+set -x
+
 apt update -y
 apt upgrade -y
 apt install nginx iperf wrk -y
@@ -44,7 +46,15 @@ cat <<EOF > /var/www/html/index.html
 <title>$(hostname)</title>
 </head>
 <body>
-<h1>$(hostname)</h1>
+<h1>Host: $(hostname)</h1>
+<h1>PCI devices</h1>
+<pre>
+$(lspci -nn)
+</pre>
+<h1>Links</h1>
+<pre>
+$(ip link)
+</pre>
 </body>
 EOF
 
