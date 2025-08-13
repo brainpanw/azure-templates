@@ -5,7 +5,7 @@ SSL_CRT_FILE=/etc/ssl/certs/nginx-selfsigned.crt
 SSL_SUBJECT="/C=US/ST=WA/L=Redmond/O=Azure Cloud Partnership/CN=azure.csp.paloaltonetworks.com"
 apt update -y
 apt upgrade -y
-apt install nginx curl iperf wrk -y
+apt install nginx iperf wrk -y
 openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout ${SSL_KEY_FILE} -out ${SSL_CRT_FILE} -subj ${SSL_SUBJECT}
 cat <<EOF > /etc/nginx/sites-available/default-ssl
 server {
