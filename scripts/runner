@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+
+import subprocess
+import time
+import sys
+import re
+from typing import List, Tuple, IO
+
+# This script acts as a wrapper to run any command while simultaneously
+# monitoring system resources (CPU, memory, swap). It generates a summary
+# report after the command finishes.
+
+# --- Configuration ---
+REPORT_FILE = "resource_report.txt"
+TEMP_CPU_LOG = "cpu_temp.log"
+TEMP_VMSTAT_LOG = "vmstat_temp.log"
+
+def get_total_memory() -> str:
+    """
+    Retrieves the total system memory in MB using the 'free' command.
+    """
+    try:
+        # Get the second line of `free -m` output which contains the memory data
+        output = subprocess.check_output(['free', '-m'], text=True)
+        lines = output.strip().split('\n')
+        # The second line is the memory line, and the second column is the total
+        total_mem = lines[1].split()[1]
+        return f"{total_mem} MB"
+    except (subprocess.CalledProcessError, IndexError, FileNotFoundError):
+        return "N/A"
+
+def start_monitoring() -> Tuple[subprocess.Popen, subprocess.Popen, IO, IO]:
+    """
+    Starts mpstat and vmstat in the background, redirecting their output to files.
+    Returns the process objects and file handles.
+    """
+    print("Starting monitoring tools in the background...")
+    try:
+        # Open files to capture the stdout of the monitoring processes
+        # These will be overwritten on each run
+        cpu_log_file = open(TEMP_CPU_LOG, 'w')
+        vmstat_log_file = open(TEMP_VMSTAT_LOG, 'w')
+
+        # mpstat: Monitors CPU usage (all cores) every 1 second
+        # The -P ALL flag is used to ensure a final "Average" line is produced.
+        mpstat_proc = subprocess.Popen(
+            ['mpstat', '1', '1'],
+            stdout=cpu_log_file,
+            stderr=subprocess.DEVNULL,
+            text=True
+        )
+
+        # vmstat: Reports virtual memory and system stats every 1 second, in MB
+        vmstat_proc = subprocess.Popen(
+            ['vmstat', '-n', '1', '-S', 'M'],
+            stdout=vmstat_log_file,
+            stderr=subprocess.DEVNULL,
+            text=True
+        )
+        print(f"Monitoring started. PIDs: mpstat={mpstat_proc.pid}, vmstat={vmstat_proc.pid}")
+        return mpstat_proc, vmstat_proc, cpu_log_file, vmstat_log_file
+    except FileNotFoundError as e:
+        print(f"Error: Command not found - {e}. Please ensure `sysstat` and `procps` are installed.")
+        sys.exit(1)
+
+def stop_monitoring(mpstat_proc: subprocess.Popen, vmstat_proc: subprocess.Popen, cpu_file: IO, vmstat_file: IO):
+    """
+    Stops monitoring processes and ensures their final output is written.
+    """
+    print("Stopping monitoring tools...")
+    # Terminate the processes gracefully
+    mpstat_proc.terminate()
+    vmstat_proc.terminate()
+
+    # Wait for the processes to actually terminate
+    mpstat_proc.wait()
+    vmstat_proc.wait()
+
+    # Close the file handles to ensure all data is flushed to disk
+    cpu_file.close()
+    vmstat_file.close()
+
+    print("Monitoring stopped.")
+
+def generate_report(command: List[str], total_memory: str) -> None:
+    """
+    Parses the raw output from files and generates a summary report.
+    """
+    print("Generating final report...")
+
+    # --- Parse mpstat output from the log file ---
+    avg_cpu = "N/A"
+    try:
+        with open(TEMP_CPU_LOG, 'r') as f:
+            mpstat_lines = f.readlines()
+            print("\n--- Raw mpstat output ---")
+            for line in mpstat_lines:
+                print(line.strip())
+            print("-------------------------\n")
+            
+            for line in mpstat_lines:
+                if line.startswith("Average:") and "all" in line:
+                    fields = line.split()
+                    if fields and fields[-1].replace('.', '', 1).isdigit():
+                        idle_percent = float(fields[-1])
+                        avg_cpu = f"{100 - idle_percent:.2f}"
+                    break # Stop after finding the first "Average" line
+    except FileNotFoundError:
+        pass
+
+    # --- Parse vmstat output from the log file ---
+    avg_swpd, avg_free, avg_si, avg_so = "0.00", "0.00", "0.00", "0.00"
+    try:
+        with open(TEMP_VMSTAT_LOG, 'r') as f:
+            vmstat_lines = f.readlines()
+            print("\n--- Raw vmstat output ---")
+            for line in vmstat_lines:
+                print(line.strip())
+            print("-------------------------\n")
+            
+            if len(vmstat_lines) > 2:
+                headers = vmstat_lines[1].split()
+                col_indices = {header: headers.index(header) for header in headers if header}
+                data_lines = vmstat_lines[2:]
+
+                if data_lines:
+                    swpd_sum, free_sum, si_sum, so_sum, count = 0, 0, 0, 0, 0
+                    for line in data_lines:
+                        fields = line.split()
+                        if len(fields) >= len(headers):
+                            try:
+                                swpd_sum += int(fields[col_indices['swpd']])
+                                free_sum += int(fields[col_indices['free']])
+                                si_sum += int(fields[col_indices['si']])
+                                so_sum += int(fields[col_indices['so']])
+                                count += 1
+                            except (ValueError, IndexError):
+                                continue
+
+                    if count > 0:
+                        avg_swpd = f"{swpd_sum / count:.2f}"
+                        avg_free = f"{free_sum / count:.2f}"
+                        avg_si = f"{si_sum / count:.2f}"
+                        avg_so = f"{so_sum / count:.2f}"
+    except FileNotFoundError:
+        pass
+    
+    # Use an f-string to write the final formatted report
+    report_content = f"""--- Resource Monitoring Report ---
+
+Timestamp: {time.strftime("%Y-%m-%d %H:%M:%S")}
+Command Executed: {" ".join(command)}
+
+Average CPU Usage:      {avg_cpu}%
+Total System Memory:    {total_memory}
+Average Free Memory:    {avg_free} MB
+Average Swap Used:      {avg_swpd} MB
+Average Swap In:        {avg_si} pages/s
+Average Swap Out:       {avg_so} pages/s
+
+--- End of Report ---
+"""
+    
+    with open(REPORT_FILE, 'w') as f:
+        f.write(report_content)
+    
+    print("Report generated and saved to", REPORT_FILE)
+    print("--- Test and Monitoring Complete ---")
+    print(report_content)
+
+def main():
+    if len(sys.argv) < 2:
+        print("Error: No command provided.")
+        print(f"Usage: {sys.argv[0]} <command_to_run> [arguments...]", file=sys.stderr)
+        sys.exit(1)
+
+    command_to_run = sys.argv[1:]
+    
+    total_memory = get_total_memory()
+    
+    mpstat_proc, vmstat_proc, cpu_file, vmstat_file = start_monitoring()
+    
+    try:
+        print("--- Executing Command ---")
+        user_proc = subprocess.Popen(command_to_run)
+        user_proc.wait()
+    except Exception as e:
+        print(f"Error: Failed to execute command. {e}", file=sys.stderr)
+        # Terminate monitoring processes in case of user command failure
+        stop_monitoring(mpstat_proc, vmstat_proc, cpu_file, vmstat_file)
+        sys.exit(1)
+    finally:
+        # Stop monitoring and generate the report
+        stop_monitoring(mpstat_proc, vmstat_proc, cpu_file, vmstat_file)
+        generate_report(command_to_run, total_memory)
+        # Leave the temporary files behind for debugging
+        print(f"Temporary log files '{TEMP_CPU_LOG}' and '{TEMP_VMSTAT_LOG}' have been retained for debugging.")
+
+if __name__ == "__main__":
+    main()
+
